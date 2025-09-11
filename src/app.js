@@ -1,3 +1,4 @@
+global.File = class {};
 import axios from "axios";
 import { wrapper } from "axios-cookiejar-support";
 import { CookieJar } from "tough-cookie";
