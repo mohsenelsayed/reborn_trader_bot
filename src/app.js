@@ -19,18 +19,24 @@ const ACCOUNT_URL = "https://classic.jadedynasty.online/page.php?page=account&lo
 const TRADER_URL = "https://classic.jadedynasty.online/page.php?page=account&subpage=trader";
 
 function parseItemsFromMessage(content) {
-  const lines = content.split('\n').filter(l => l.trim() && !l.startsWith('**') && !l.startsWith('|') && !l.startsWith('-'));
+  const lines = content.split('\n').filter(l =>
+    l.trim() &&
+    l.startsWith('|') &&
+    !l.startsWith('| Item') &&
+    !l.startsWith('|---')
+  );
   const items = [];
   for (const line of lines) {
-    const match = line.match(/^(.*?)\s+\|\s+(\w+)\s+\|\s+x?(\d+)\s+\|\s+(\d+[.,]?\d*)/);
-    if (match) {
-      const item = match[1].trim();
-      const grade = match[2].trim();
-      const amount = parseInt(match[3].replace('x',''));
-      const price = parseFloat(match[4].replace(',',''));
-      if (item && grade && amount && price) {
-        items.push({ item, grade, amount, price, pricePerUnit: price/amount });
-      }
+    const parts = line.split('|').map(p => p.trim());
+    if (parts.length < 9) continue;
+    const item = parts[1];
+    const grade = parts[2];
+    const amount = parseInt(parts[3].replace('x', ''));
+    const priceStr = parts[4];
+    // Remove all '.' thousands separators, then parse as integer, preserving zeros
+    let price = parseInt(priceStr.replace(/\./g, ''));
+    if (item && grade && amount && priceStr) {
+      items.push({ item, grade, amount, price, priceStr, pricePerUnit: price });
     }
   }
   return items;
@@ -43,7 +49,7 @@ async function getHistoricalItemData(channel, botId, limit=1000) {
     const fetched = await channel.messages.fetch({ limit: 100, ...(lastId && { before: lastId }) });
     if (fetched.size === 0) break;
     for (const msg of fetched.values()) {
-      if (msg.author.id === botId && msg.content.includes('Daily Trader Items')) {
+      if (msg.author.id === botId) {
         messages.push(msg);
       }
     }
@@ -96,9 +102,12 @@ async function fetchTraderTable() {
     const item = tds.eq(0).find("span").text().trim();
     const grade = tds.eq(1).text().trim();
     const amount = parseInt(tds.eq(2).text().replace('x','').trim());
-    const price = parseFloat(tds.eq(3).find("span.red").text().replace(',','').trim());
-    if (item && grade && amount && price) {
-      items.push({ item, grade, amount, price, pricePerUnit: price/amount });
+    const priceStrRaw = tds.eq(3).find("span.red").text().replace(',','').trim();
+    const priceStr = priceStrRaw;
+    // Remove all '.' thousands separators, then parse as integer, preserving zeros
+    let price = parseInt(priceStr.replace(/\./g, ''));
+    if (item && grade && amount && priceStr) {
+      items.push({ item, grade, amount, price, priceStr, pricePerUnit: price });
     }
   });
   return items;
@@ -109,23 +118,24 @@ function buildTraderMessage(todayItems, history) {
   msg += '```md\n';
   msg += '| Item                 | Grade     | Amount  | Price    | Avg      | Min      | Max      | Flag |\n';
   msg += '|----------------------|-----------|---------|----------|----------|----------|----------|------|\n';
-  // Skip first two rows when printing
   todayItems.slice(2).forEach(item => {
-    const prices = history.filter(h => h.item === item.item && h.grade === item.grade).map(h => h.pricePerUnit);
+    // Match by item and grade
+    const historyMatches = history.filter(h => h.item === item.item.slice(0, 20) && h.grade === item.grade);
+    const pricesInt = historyMatches.map(h => h.pricePerUnit);
     let avg = null, min = null, max = null, flag = '';
-    // Limit item name to 20 chars
     let itemName = item.item.length > 20 ? item.item.slice(0, 20) : item.item.padEnd(20);
-    if (prices.length) {
-      avg = prices.reduce((a,b)=>a+b,0)/prices.length;
-      min = Math.min(...prices);
-      max = Math.max(...prices);
-      const avgBatch = avg * item.amount;
-      const minBatch = min * item.amount;
-      const maxBatch = max * item.amount;
-      flag = item.pricePerUnit <= avg ? '🟩' : '🟥';
-      msg += `| ${itemName} | ${item.grade.padEnd(9)} | ${('x'+item.amount).padEnd(7)} | ${item.price.toString().padEnd(8)} | ${avgBatch.toFixed(2).padEnd(8)} | ${minBatch.toFixed(2).padEnd(8)} | ${maxBatch.toFixed(2).padEnd(8)} | ${flag} |\n`;
+    if (pricesInt.length) {
+      avg = Math.floor(pricesInt.reduce((a,b)=>a+b,0)/pricesInt.length);
+      min = Math.min(...pricesInt);
+      max = Math.max(...pricesInt);
+  // Show avg/min/max as per-unit prices only
+  const avgStr = String(avg).padEnd(8);
+  const minStr = String(min).padEnd(8);
+  const maxStr = String(max).padEnd(8);
+  flag = item.pricePerUnit <= avg ? '🟩' : '🟥';
+  msg += `| ${itemName} | ${item.grade.padEnd(9)} | ${('x'+item.amount).padEnd(7)} | ${item.priceStr.padEnd(8)} | ${avgStr} | ${minStr} | ${maxStr} | ${flag} |\n`;
     } else {
-      msg += `| ${itemName} | ${item.grade.padEnd(9)} | ${('x'+item.amount).padEnd(7)} | ${item.price.toString().padEnd(8)} | ${'new'.padEnd(8)} | ${'new'.padEnd(8)} | ${'new'.padEnd(8)} | 🟩 |\n`;
+      msg += `| ${itemName} | ${item.grade.padEnd(9)} | ${('x'+item.amount).padEnd(7)} | ${item.priceStr.padEnd(8)} | ${'new'.padEnd(8)} | ${'new'.padEnd(8)} | ${'new'.padEnd(8)} | 🟩 |\n`;
     }
   });
   msg += '```';
@@ -153,4 +163,5 @@ client.once("ready", async () => {
   }
 });
 
+client.login(DISCORD_TOKEN);
 client.login(DISCORD_TOKEN);
